@@ -1,0 +1,190 @@
+---
+title: "广义线性模型"
+author: "kaka"
+date: "2020/11/13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+par(mar=c(4,4,1,1),cex=0.75)
+library(openxlsx)
+knitr::opts_chunk$set(echo = TRUE,warning=FALSE,message=FALSE,include=TRUE,comment='')
+```
+
+# Logistic模型——例子5.1
+
+y：是否发生事故（1：出过事故、0：没有）  
+$x_1$:视力情况（1：正常、0：有问题）  
+$x_2$:年龄  
+$x_3$:驾车教育（1：参加过、0：没有）  
+
+```{r ex5.1}
+d5.1=read.xlsx('mvstats5.xlsx','d5.1')
+logit.glm<-glm(y~x1+x2+x3,family=binomial,data=d5.1)
+summary(logit.glm)
+```
+```{r, include=FALSE }
+op1=summary(logit.glm)
+bt=round(op1$coefficients[,1],4)
+```
+
+Logistic模型估计：
+$$log(\frac{\hat{p}}{1-\hat{p}})=`r bt[1]``r bt[2]`x_1`r bt[3]`x_2+`r bt[4]`x_3$$
+&emsp;&emsp;只有视力情况情况影响显著，正常视力的发生事故优势比对数较有问题的降低了约1.5。年龄和驾车教育对发生事故优势比的影响分别为负和正，但统计意义上不显著。
+
+### **手编极大似然估计**
+```{r ex5.1_1}
+Y=d5.1[,1];X=as.matrix(cbind(x0=1,d5.1[,2:4]))
+maxIterNum <- 20000;  #最大迭代次数
+W <- rep(0, ncol(X))  #系数估计向量，初始为0向量
+sigmoid <- function(z) { 1 / (1 + exp(-z))}
+for (i in 1:maxIterNum){
+  P=as.vector(sigmoid(X %*% W))
+  grad <- t(X) %*% (P-Y);
+  grad2<- t(X) %*% diag(P*(1-P))%*%X
+  if (sqrt(as.numeric(t(grad) %*% grad)) < 1e-8){
+    print(sprintf('iter times=%d', i));
+    break;
+  }
+  W <- W - solve(grad2)%*%grad  #Newton-Raphson迭代
+}
+sd=(diag(solve(grad2)))^0.5 #系估计标准差
+cbind(Est=round(W[,1],6),SdEr=round(sd,6))
+```
+&emsp;&emsp;自编程序迭代5次结束,根据公式计算的结果与函数输出基本一致。利用估计值与标准差相除可得近似正态统计量，在样本容量足够大情况下可以对系数是否为零作检验。
+
+### **模型评价**
+```{r ex5.1_2}
+#AIC值
+aic=-2*(t(Y)%*%X %*% W-sum(log(1+exp(X %*% W))))+8
+#伪R方
+psR=1-logit.glm$deviance/logit.glm$null.deviance
+#概率预测值
+#logit.glm$fitted.values
+#注意不能用predict函数
+#y预测值
+yh=as.numeric(logit.glm$fitted.values>0.5)
+#混淆矩阵
+hx=table(yh,Y)
+#预测正确比例
+pcp=sum(diag(hx))/sum(hx)
+```
+
+```{r,collapse=TRUE,echo = FALSE}
+cat("AIC值=",aic,"\n")
+cat("伪R方=",psR,"\n")
+cat("混淆矩阵=","\n")
+hx
+cat("预测正确比例=",pcp)
+```
+
+### **模型解释**
+```{r ex5.1_3}
+#均值边际效应(PEA)
+xbat<-(apply(X,2,mean))
+pea=dlogis(sum(xbat*W))*W
+#平均边际效应(AME)
+ame=mean(dlogis(X %*% W))*W
+cbind(pea=pea[,1],ame=ame[,1])
+```
+
+&emsp;&emsp;两种边际效数值很接近，应由于$x_1$为分类变量平均边际效应的解释更为合理，即视力正常比视力有问题发生事故的概率要低约33%。
+
+### **模型变量选择与预测**
+```{r ex5.1_4}
+logit.step<-step(logit.glm,direction="both")#逐步筛选法变量选择
+summary(logit.step)#逐步筛选法变量选择结果
+pre1<-predict(logit.step,data.frame(x1=1))#预测视力正常司机Logistic回归结果
+p1<-exp(pre1)/(1+exp(pre1))#预测视力正常司机发生事故概率
+pre2<-predict(logit.step,data.frame(x1=0))#预测视力有问题的司机Logistic回归结果
+p2<-exp(pre2)/(1+exp(pre2))#预测视力有问题的司机发生事故概率
+c(p1,p2)#结果显示
+```
+&emsp;&emsp;逐步回归的结果只保留$x_1$，视力正常的事故发生概率为32%，视力有问题的事故发生鼓励为65%，大约相差33%，与前面分析相同。
+
+# 对数线性模型——例子5.2
+
+y：是人数  
+$x_1$:收入水平（1:高,2:中,3:低）  
+$x_2$:是否满意（1：满意,2:不满意）  
+
+```{r ex5.2}
+d5.2=read.xlsx('mvstats5.xlsx','d5.2');head(d5.2)
+d5.2$x1=factor(d5.2$x1)
+d5.2$x2=factor(d5.2$x2)
+#列联表卡方独立性检验
+chisq.test(matrix(c(53,434,111,38,108,48),3,2))
+library(MASS)
+#对数线性模型检验，检验模型和含有交互作用模型的差异
+#原假设模型不存在交互作用，即两变量独立。
+#大样本下该检验等价与卡方独立性检验
+loglm(y~x1+x2,data=d5.2)
+```
+&emsp;&emsp;无论是卡方独立性检验(统计量为23.57)还是对数线性模型检验(统计量为22.09)都拒绝原假设，即认为收入和满意程度不独立，存在交互作用。理论上应该在模型中加入交互作用项，但由于每个单元格只有一个数据，只能建立个体效应模型。
+
+### **个体效应模型估计**
+```{r ex5.2_1}
+log.glm<-glm(y~x1+x2,family=poisson(link=log),data=d5.2)#多元对数线性模型
+summary(log.glm)#多元对数线性模型结果
+```
+&emsp;&emsp;又结果得两个分类变量的人数都有显著差异，中低收入的人数比例都比高收入的显著高；而不满意的人数比例比不满意的显著低。
+
+### **手编极大似然估计**
+```{r ex5.2_2}
+Y=d5.2[,1];X=as.matrix(cbind(x0=1,x12=(d5.2[,2]==2),x13=(d5.2[,2]==3),x22=(d5.2[,3]==2)))
+maxIterNum <- 20000;
+W <- rep(1, ncol(X))
+m = nrow(X)
+for (i in 1:maxIterNum){
+  la=as.vector(exp(X %*% W))
+  grad <- t(X) %*% (la-Y);
+  grad2<- t(X) %*% diag(la)%*%X
+  if (sqrt(as.numeric(t(grad) %*% grad)) < 1e-8){
+    print(sprintf('iter times=%d', i));
+    break;
+  }
+  W <- W - solve(grad2)%*%grad
+}
+sd=(diag(solve(grad2)))^0.5 #系估计标准差
+cbind(Est=round(W[,1],6),SdEr=round(sd,6))
+#AIC值
+s=0
+for(i in 1:length(Y)){
+  s=s+sum(log(1:Y[i]))
+}
+-2*(t(Y)%*%X %*% W-sum(exp(X %*% W))-s)+8
+```
+&emsp;&emsp;自编程序迭代43次结束,需要先进分类变量虚拟化，根据公式计算的结果与函数输出基本一致，AIC值为68.07。
+
+# 一般线性模型
+## —— 5.3.1 完全随机设计模型 ----------------------
+```{r ex5.3.1}
+d5.3=read.xlsx('mvstats5.xlsx','d5.3')
+summary(lm(Y~factor(A),data=d5.3))
+anova(lm(Y~factor(A),data=d5.3))
+```
+&emsp;&emsp;单因素方差分析等价于自含有一个分类自变量的一般线性模型，其F检验等价，但一般线性模型能估计出各因素水平的效应差异。因素A的第二和第三个水平效应显著高于第一个水平。
+
+## —— 5.3.2 随机区组设计模型 ---------------------
+```{r ex5.3.2}
+d5.4=read.xlsx('mvstats5.xlsx','d5.4')
+anova(lm(Y~factor(A)+factor(B),data=d5.4))
+summary(lm(Y~factor(A)+factor(B),data=d5.4))
+```
+&emsp;&emsp;多因素方差分析等价于自含有多个分类自变量的一般线性模型，将不同因素水平的系数联合作F检验。从方差分析中认为因素A和B都没有显著的个体效应。从一般线性模型的结果看，各系数也不显著，认为不同因素水平的影响没有显著差别。原则上模型应该考虑交互效应，但单元格的数据只有一个，不能估计交互效应模型的参数。
+
+## —— 5.3.3 析因设计模型 ------------------------
+```{r ex5.3.3}
+d5.5=read.xlsx('mvstats5.xlsx','d5.5')
+anova(lm(Y~factor(A)*factor(B),data=d5.5))
+summary(lm(Y~factor(A)*factor(B),data=d5.5))
+```
+&emsp;&emsp;factor(A)*factor(B)表示含有两个因素的饱和模型(即包含个体效应也包含全部的交互效应项)。从方差分析结果看，两个因素的个体效应显著，且交互效应也显著。交互效应显著意味不能单独比较某因素不同水平的高度，而要考另一个因素的具体取值。如47是A1B1的效应，A2B1的效应为47-6.5，A1B2的效应为47+38.5；但A2B2的效应不是47-6.5+38.5，而是47-6.5+38.5-27，即因素A、B同时从1变化2会产生额外的负效应。
+## —— 5.3.4 正交设计模型 ------------------------
+```{r ex5.3.4}
+d5.6=read.xlsx('mvstats5.xlsx','d5.6')
+anova(lm(Y~factor(A)*factor(B)+factor(C)+factor(D),data=d5.6))
+summary(lm(Y~factor(A)*factor(B)+factor(C)+factor(D),data=d5.6))
+```
+&emsp;&emsp;正交设计是一种实验设计，通常如果要建立包含交互作用的模型需要大量实验收集数据，增加研究成本。而正交设计在小量实验的情况下仍能有效建立交互作用模型，并进行假设检验。由方差分析和一般线性模型的输出结果看，因素C和AB的交互项的效应显著，即C由水平1变为水平2效应增加5.5，但因素A、B同时从1变化2会产生-10的负效应。
+
