@@ -1,6 +1,6 @@
 ###例题6-1 Fisher判别----------------------------
 d6.1=read.xlsx('mvstats5.xlsx','d6.1');d6.1
-attach(d6.1)#绑定数据
+attach(d6.1)
 plot(x1,x2); text(x1,x2,G,adj=-0.5) #标识点所属类别G
 library(MASS)
 (ld=lda(G~x1+x2,data=d6.1))#线性判别模型
